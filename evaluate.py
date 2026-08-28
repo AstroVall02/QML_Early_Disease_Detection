@@ -14,19 +14,31 @@ from sklearn.metrics import (
     classification_report,
     accuracy_score,
     recall_score,
+    roc_auc_score,
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-def evaluate_and_report(y_true, y_pred, model_name="Model", save_path=None):
+def evaluate_and_report(
+    y_true,
+    y_pred,
+    y_prob=None,
+    model_name="Model",
+    save_path=None
+):
     y_true = np.asarray(y_true).astype(int).ravel()
     y_pred = np.asarray(y_pred).astype(int).ravel()
 
     acc = accuracy_score(y_true, y_pred)
     sensitivity = recall_score(y_true, y_pred, pos_label=0)
     specificity = recall_score(y_true, y_pred, pos_label=1)
-
+    if y_prob is not None:
+        auc = roc_auc_score(y_true, y_prob)
+        print(f"ROC-AUC:    {auc:.4f}")
+    else:
+        auc = None
+        print("ROC-AUC:    Not available")
     print(f"{model_name}")
     print(f"Accuracy:  {acc:.4f}")
     print(f"Sensitivity (malignant recall):  {sensitivity:.4f}")
@@ -58,6 +70,7 @@ def evaluate_and_report(y_true, y_pred, model_name="Model", save_path=None):
         "accuracy": acc,
         "sensitivity": sensitivity,
         "specificity": specificity,
+        "roc_auc": auc,
         "confusion_matrix": cm,
     }
 
