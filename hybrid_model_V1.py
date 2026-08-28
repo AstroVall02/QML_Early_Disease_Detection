@@ -248,6 +248,7 @@ if __name__ == "__main__":
     evaluate_and_report(
     y_test.numpy(),
     test_preds.numpy(),
+    test_probabilities.numpy(),
     model_name="Hybrid TorchLayer VQC",
     save_path="hybrid_confusion_matrix.png"
     )
