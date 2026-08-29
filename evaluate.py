@@ -1,15 +1,14 @@
 """
-Evaluation module - shared across all trained models (quantum, classical baseline, hybrid)
-and all datasets (WDBC, heart disease, and any future additions).
+Evaluation module shared across quantum, classical, and hybrid models.
 
-Reuse `evaluate_and_report()` on any trained model
-pass in plain numpy arrays of true labels and predicted labels 
-(optionally predicted probabilities/scores for ROC-AUC).
+`evaluate_and_report()` accepts NumPy-compatible true labels, predictions,
+and optionally predicted probabilities/scores for ROC-AUC calculation.
 
-IMPORTANT note for team - label convention is NOT the same across datasets:
-    WDBC (sklearn):   malignant (disease present) = 0
-    heart.csv (UCI):  disease present = 1
-Always pass `disease_label` explicitly matching the dataset
+Dataset label conventions differ:
+    WDBC:         malignant (disease present) = 0
+    heart.csv:    disease present = 1
+
+Pass `disease_label` explicitly for each dataset.
 """
 
 import numpy as np
@@ -39,15 +38,18 @@ def evaluate_and_report(
     other_label = 1 - disease_label
 
     acc = accuracy_score(y_true, y_pred)
-    # sensitivity = recall on the disease-positive class
+
+    # Sensitivity measures recall for the disease-positive class.
     sensitivity = recall_score(y_true, y_pred, pos_label=disease_label)
-    # specificity = recall on the disease-negative class
+
+    # Specificity measures recall for the disease-negative class.
     specificity = recall_score(y_true, y_pred, pos_label=other_label)
 
     if y_prob is not None:
         y_prob = np.asarray(y_prob).ravel()
-        # roc_auc_score expects probability of the label encoded as 1;
-        # if disease_label == 0, flip score so "high score" still means "more likely disease"
+
+        # ROC-AUC requires scores where higher values indicate greater
+        # likelihood of disease, regardless of the dataset's label encoding.
         score_for_auc = y_prob if disease_label == 1 else (1 - y_prob)
         auc = roc_auc_score(y_true == disease_label, score_for_auc)
     else:
@@ -61,19 +63,28 @@ def evaluate_and_report(
     print()
 
     labels_ordered = [disease_label, other_label]
+
     print(classification_report(
-        y_true, y_pred, labels=labels_ordered, target_names=list(class_names)
+        y_true,
+        y_pred,
+        labels=labels_ordered,
+        target_names=list(class_names)
     ))
 
     cm = confusion_matrix(y_true, y_pred, labels=labels_ordered)
 
     fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(
-        cm, annot=True, fmt="d", cmap="Blues", cbar=False,
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        cbar=False,
         xticklabels=list(class_names),
         yticklabels=list(class_names),
         ax=ax,
     )
+
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
     ax.set_title(f"Confusion Matrix — {model_name}")
@@ -82,6 +93,7 @@ def evaluate_and_report(
     if save_path:
         plt.savefig(save_path, dpi=200)
         print(f"Saved confusion matrix plot to {save_path}")
+
     plt.close(fig)
 
     return {
@@ -103,20 +115,29 @@ if __name__ == "__main__":
 
     data = load_breast_cancer()
     X, y = data.data, data.target
+
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y
     )
 
     N_QUBITS = 4
+
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
+
     pca = PCA(n_components=N_QUBITS)
     X_train_pca = pca.fit_transform(X_train_scaled)
     X_test_pca = pca.transform(X_test_scaled)
+
     angle_scaler = MinMaxScaler(feature_range=(0, np.pi))
     X_train_angles = angle_scaler.fit_transform(X_train_pca)
     X_test_angles = angle_scaler.transform(X_test_pca)
+
     y_train_pm = pnp.array(y_train * 2 - 1, requires_grad=False)
     y_test_pm = pnp.array(y_test * 2 - 1, requires_grad=False)
 
@@ -140,30 +161,54 @@ if __name__ == "__main__":
         return square_loss(y, predictions)
 
     np.random.seed(0)
-    weight_shape = qml.StronglyEntanglingLayers.shape(n_layers=N_LAYERS, n_wires=N_QUBITS)
-    weights = pnp.array(np.random.uniform(0, 2 * np.pi, weight_shape), requires_grad=True)
+
+    weight_shape = qml.StronglyEntanglingLayers.shape(
+        n_layers=N_LAYERS,
+        n_wires=N_QUBITS
+    )
+
+    weights = pnp.array(
+        np.random.uniform(0, 2 * np.pi, weight_shape),
+        requires_grad=True
+    )
+
     bias = pnp.array(0.0, requires_grad=True)
 
     opt = qml.NesterovMomentumOptimizer(stepsize=0.05)
+
     for epoch in range(15):
         perm = np.random.permutation(len(X_train_angles))
         Xs, ys = X_train_angles[perm], y_train_pm[perm]
-        for start in range(0, len(Xs), 16):
-            weights, bias, _, _ = opt.step(cost, weights, bias, Xs[start:start + 16], ys[start:start + 16])
 
-    test_preds_raw = np.array([variational_classifier(weights, bias, x) for x in X_test_angles])
+        for start in range(0, len(Xs), 16):
+            weights, bias, _, _ = opt.step(
+                cost,
+                weights,
+                bias,
+                Xs[start:start + 16],
+                ys[start:start + 16]
+            )
+
+    test_preds_raw = np.array([
+        variational_classifier(weights, bias, x)
+        for x in X_test_angles
+    ])
+
     preds_sign = np.sign(test_preds_raw)
 
-    # convert back from {-1,+1} to {0,1} == {malignant, benign}
+    # Convert {-1,+1} predictions back to the dataset's {0,1} labels.
     y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
     y_pred_01 = ((preds_sign + 1) // 2).astype(int)
 
+    # Convert the raw VQC output into a probability-like score for AUC.
     y_prob_benign = np.clip((test_preds_raw + 1) / 2, 0, 1)
 
     evaluate_and_report(
-        y_true_01, y_pred_01,
+        y_true_01,
+        y_pred_01,
         y_prob=y_prob_benign,
         model_name="VQC (4 qubits)",
         save_path="vqc_confusion_matrix.png",
-        disease_label=0, class_names=("Malignant", "Benign"),  # WDBC: 0=malignant
+        disease_label=0,
+        class_names=("Malignant", "Benign"),
     )
