@@ -1,11 +1,20 @@
 """
-Evaluation module for the VQC breast cancer classifier.
+Evaluation module -- shared across all trained models (quantum, classical
+baseline, hybrid) and all datasets (WDBC, heart disease, and any future
+additions).
 
-This is deliberately separate from the training script
-Reuse - `evaluate_and_report()` on any trained model 
-[Note: pass in plain numpy arrays of true labels and predicted labels.]
+This is deliberately separate from any training script -- reuse
+`evaluate_and_report()` on any trained model; pass in plain numpy arrays
+of true labels and predicted labels (and optionally predicted
+probabilities/scores for ROC-AUC).
 
-Labels convention: 0 = malignant, 1 = benign
+IMPORTANT -- label convention is NOT the same across datasets:
+    WDBC (sklearn):   malignant (disease present) = 0
+    heart.csv (UCI):  disease present = 1
+Always pass `disease_label` explicitly matching the dataset you're
+evaluating -- do not rely on the default. Getting this wrong silently
+swaps sensitivity and specificity (this happened once already on the
+heart disease results -- see team notes).
 """
 
 import numpy as np
@@ -14,34 +23,69 @@ from sklearn.metrics import (
     classification_report,
     accuracy_score,
     recall_score,
+    roc_auc_score,
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-def evaluate_and_report(y_true, y_pred, model_name="Model", save_path=None):
+def evaluate_and_report(
+    y_true,
+    y_pred,
+    y_prob=None,
+    model_name="Model",
+    save_path=None,
+    disease_label=0,
+    class_names=("Disease", "No Disease"),
+):
+    """
+    y_true, y_pred: array-like of 0/1 labels.
+    y_prob: optional array-like of predicted probabilities/scores for the
+        disease-positive class, used to compute ROC-AUC. Omit if unavailable.
+    disease_label: which label value means "disease present" in THIS
+        dataset (see module docstring -- this varies by dataset, always
+        set it explicitly rather than relying on the default).
+    class_names: (name_for_disease_label, name_for_other_label).
+    """
     y_true = np.asarray(y_true).astype(int).ravel()
     y_pred = np.asarray(y_pred).astype(int).ravel()
+    other_label = 1 - disease_label
 
     acc = accuracy_score(y_true, y_pred)
-    sensitivity = recall_score(y_true, y_pred, pos_label=0)
-    specificity = recall_score(y_true, y_pred, pos_label=1)
+    # sensitivity = recall on the disease-positive class
+    sensitivity = recall_score(y_true, y_pred, pos_label=disease_label)
+    # specificity = recall on the disease-negative class
+    specificity = recall_score(y_true, y_pred, pos_label=other_label)
 
-    print(f"{model_name}")
-    print(f"Accuracy:  {acc:.4f}")
-    print(f"Sensitivity (malignant recall):  {sensitivity:.4f}")
-    print(f"Specificity (benign recall):     {specificity:.4f}\n")
+    if y_prob is not None:
+        y_prob = np.asarray(y_prob).ravel()
+        # roc_auc_score expects probability of the label encoded as 1;
+        # if disease_label == 0, flip the score so "high score" still
+        # means "more likely disease" from the metric's point of view.
+        score_for_auc = y_prob if disease_label == 1 else (1 - y_prob)
+        auc = roc_auc_score(y_true == disease_label, score_for_auc)
+    else:
+        auc = None
+
+    print(f"--- {model_name} ---")
+    print(f"Accuracy:    {acc:.4f}")
+    print(f"Sensitivity ({class_names[0]} recall): {sensitivity:.4f}")
+    print(f"Specificity ({class_names[1]} recall): {specificity:.4f}")
+    print(f"ROC-AUC:     {auc:.4f}" if auc is not None else "ROC-AUC:     Not available (pass y_prob to compute)")
+    print()
+
+    labels_ordered = [disease_label, other_label]
     print(classification_report(
-        y_true, y_pred, labels=[0, 1], target_names=["Malignant", "Benign"]
+        y_true, y_pred, labels=labels_ordered, target_names=list(class_names)
     ))
 
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    cm = confusion_matrix(y_true, y_pred, labels=labels_ordered)
 
     fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(
         cm, annot=True, fmt="d", cmap="Blues", cbar=False,
-        xticklabels=["Malignant", "Benign"],
-        yticklabels=["Malignant", "Benign"],
+        xticklabels=list(class_names),
+        yticklabels=list(class_names),
         ax=ax,
     )
     ax.set_xlabel("Predicted")
@@ -58,13 +102,14 @@ def evaluate_and_report(y_true, y_pred, model_name="Model", save_path=None):
         "accuracy": acc,
         "sensitivity": sensitivity,
         "specificity": specificity,
+        "roc_auc": auc,
         "confusion_matrix": cm,
     }
 
 
 if __name__ == "__main__":
     # Quick demo using the same StronglyEntanglingLayers VQC setup
-    # already validated, so this can be run byt itself for the pitch.
+    # already validated, so this can be run by itself for the pitch.
     import pennylane as qml
     from pennylane import numpy as pnp
     from sklearn.datasets import load_breast_cancer
@@ -122,15 +167,23 @@ if __name__ == "__main__":
         for start in range(0, len(Xs), 16):
             weights, bias, _, _ = opt.step(cost, weights, bias, Xs[start:start + 16], ys[start:start + 16])
 
-    test_preds = [variational_classifier(weights, bias, x) for x in X_test_angles]
-    preds_sign = np.sign(qml.math.stack(test_preds))
+    test_preds_raw = np.array([variational_classifier(weights, bias, x) for x in X_test_angles])
+    preds_sign = np.sign(test_preds_raw)
 
     # convert back from {-1,+1} to {0,1} == {malignant, benign}
     y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
-    y_pred_01 = ((np.asarray(preds_sign) + 1) // 2).astype(int)
+    y_pred_01 = ((preds_sign + 1) // 2).astype(int)
+
+    # pseudo-probability of "malignant" (disease_label=0) from the raw
+    # expectation value, for the ROC-AUC demo: expectation is in [-1, 1]
+    # where -1 pushes toward label 0 (malignant); rescale to [0, 1] as
+    # "probability of benign" (label 1), matching disease_label=0 below.
+    y_prob_benign = np.clip((test_preds_raw + 1) / 2, 0, 1)
 
     evaluate_and_report(
         y_true_01, y_pred_01,
-        model_name="VQC (4 qubits)",
+        y_prob=y_prob_benign,
+        model_name="VQC (4 qubits, StronglyEntanglingLayers)",
         save_path="vqc_confusion_matrix.png",
+        disease_label=0, class_names=("Malignant", "Benign"),  # WDBC: 0=malignant
     )
