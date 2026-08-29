@@ -103,14 +103,18 @@ for epoch in range(N_EPOCHS):
 # 6] TESTING
 test_preds = [variational_classifier(weights, bias, x) for x in X_test_angles]
 preds_sign = np.sign(qml.math.stack(test_preds))
-
+# Convert the raw VQC output from approximately [-1, +1]
+# into a probability-like score where higher means more likely disease.
+y_prob_disease = np.clip((np.asarray(test_preds) + 1) / 2, 0, 1)
 y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
 y_pred_01 = ((np.asarray(preds_sign) + 1) // 2).astype(int)
 
 
 # 7] Evaluation
 evaluate_and_report(
-    y_true_01, y_pred_01,
+    y_true_01,
+    y_pred_01,
+    y_prob=y_prob_disease,
     model_name="VQC Heart Disease (4 qubits)",
     save_path="VQC_Heart_confusion_matrix.png",
     disease_label=1,
