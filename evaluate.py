@@ -1,20 +1,15 @@
 """
-Evaluation module -- shared across all trained models (quantum, classical
-baseline, hybrid) and all datasets (WDBC, heart disease, and any future
-additions).
+Evaluation module - shared across all trained models (quantum, classical baseline, hybrid)
+and all datasets (WDBC, heart disease, and any future additions).
 
-This is deliberately separate from any training script -- reuse
-`evaluate_and_report()` on any trained model; pass in plain numpy arrays
-of true labels and predicted labels (and optionally predicted
-probabilities/scores for ROC-AUC).
+Reuse `evaluate_and_report()` on any trained model
+pass in plain numpy arrays of true labels and predicted labels 
+(optionally predicted probabilities/scores for ROC-AUC).
 
-IMPORTANT -- label convention is NOT the same across datasets:
+IMPORTANT note for team - label convention is NOT the same across datasets:
     WDBC (sklearn):   malignant (disease present) = 0
     heart.csv (UCI):  disease present = 1
-Always pass `disease_label` explicitly matching the dataset you're
-evaluating -- do not rely on the default. Getting this wrong silently
-swaps sensitivity and specificity (this happened once already on the
-heart disease results -- see team notes).
+Always pass `disease_label` explicitly matching the dataset
 """
 
 import numpy as np
@@ -38,15 +33,7 @@ def evaluate_and_report(
     disease_label=0,
     class_names=("Disease", "No Disease"),
 ):
-    """
-    y_true, y_pred: array-like of 0/1 labels.
-    y_prob: optional array-like of predicted probabilities/scores for the
-        disease-positive class, used to compute ROC-AUC. Omit if unavailable.
-    disease_label: which label value means "disease present" in THIS
-        dataset (see module docstring -- this varies by dataset, always
-        set it explicitly rather than relying on the default).
-    class_names: (name_for_disease_label, name_for_other_label).
-    """
+    
     y_true = np.asarray(y_true).astype(int).ravel()
     y_pred = np.asarray(y_pred).astype(int).ravel()
     other_label = 1 - disease_label
@@ -60,14 +47,13 @@ def evaluate_and_report(
     if y_prob is not None:
         y_prob = np.asarray(y_prob).ravel()
         # roc_auc_score expects probability of the label encoded as 1;
-        # if disease_label == 0, flip the score so "high score" still
-        # means "more likely disease" from the metric's point of view.
+        # if disease_label == 0, flip score so "high score" still means "more likely disease"
         score_for_auc = y_prob if disease_label == 1 else (1 - y_prob)
         auc = roc_auc_score(y_true == disease_label, score_for_auc)
     else:
         auc = None
 
-    print(f"--- {model_name} ---")
+    print(f" {model_name}")
     print(f"Accuracy:    {acc:.4f}")
     print(f"Sensitivity ({class_names[0]} recall): {sensitivity:.4f}")
     print(f"Specificity ({class_names[1]} recall): {specificity:.4f}")
@@ -108,8 +94,6 @@ def evaluate_and_report(
 
 
 if __name__ == "__main__":
-    # Quick demo using the same StronglyEntanglingLayers VQC setup
-    # already validated, so this can be run by itself for the pitch.
     import pennylane as qml
     from pennylane import numpy as pnp
     from sklearn.datasets import load_breast_cancer
@@ -174,16 +158,12 @@ if __name__ == "__main__":
     y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
     y_pred_01 = ((preds_sign + 1) // 2).astype(int)
 
-    # pseudo-probability of "malignant" (disease_label=0) from the raw
-    # expectation value, for the ROC-AUC demo: expectation is in [-1, 1]
-    # where -1 pushes toward label 0 (malignant); rescale to [0, 1] as
-    # "probability of benign" (label 1), matching disease_label=0 below.
     y_prob_benign = np.clip((test_preds_raw + 1) / 2, 0, 1)
 
     evaluate_and_report(
         y_true_01, y_pred_01,
         y_prob=y_prob_benign,
-        model_name="VQC (4 qubits, StronglyEntanglingLayers)",
+        model_name="VQC (4 qubits)",
         save_path="vqc_confusion_matrix.png",
         disease_label=0, class_names=("Malignant", "Benign"),  # WDBC: 0=malignant
     )
