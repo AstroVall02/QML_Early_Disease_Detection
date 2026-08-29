@@ -1,19 +1,9 @@
 """
-Member 3 -- Hybrid integration: wraps the quantum circuit (from Member 1)
-into a PyTorch model, so it can eventually sit downstream of Member 2's
-classical preprocessing pipeline.
+Hybrid quantum-classical classifier.
 
-IMPORTANT: This file is split into two clearly marked parts.
-
-PART A -- fully independent of Member 2. Builds and trains the hybrid
-          PyTorch+quantum model using placeholder data generated locally
-          (same PCA+angle-scaling Member 1 already validated). Can be
-          built, run, and tested today.
-
-PART B -- the ONLY part that needs Member 2's finished pipeline. It's a
-          single function stub with a documented contract. Once Member 2
-          delivers `preprocess()` matching this contract, swap it in --
-          nothing else in this file changes.
+The model combines a 4-qubit PennyLane quantum circuit with a
+PyTorch classical output layer. The input is expected to contain
+4 features scaled to the range [0, pi].
 """
 
 import torch
@@ -28,21 +18,18 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score
 import time
 from evaluation.evaluate import evaluate_and_report
-# ============================================================
-# PART A: Everything here works TODAY, independent of Member 2
-# ============================================================
 
 N_QUBITS = 4
 N_LAYERS = 3
 
-# ---- A1. Quantum circuit (Member 1's design, unchanged) ----
+# 4-qubit quantum circuit using angle encoding followed by
+# StronglyEntanglingLayers. Each qubit produces a Pauli-Z expectation value.
 dev = qml.device("default.qubit", wires=N_QUBITS)
 
 
 @qml.qnode(dev, diff_method="backprop", interface="torch")
 def circuit(inputs, weights):
-    # NOTE: TorchLayer requires the trainable-input argument to be named
-    # exactly "inputs" -- this is a PennyLane convention, not optional.
+    # TorchLayer requires the input argument to be named "inputs".
     qml.AngleEmbedding(inputs, wires=range(N_QUBITS), rotation="Y")
     qml.StronglyEntanglingLayers(weights, wires=range(N_QUBITS))
     return [qml.expval(qml.PauliZ(w)) for w in range(N_QUBITS)]
@@ -51,13 +38,17 @@ def circuit(inputs, weights):
 weight_shapes = {"weights": qml.StronglyEntanglingLayers.shape(n_layers=N_LAYERS, n_wires=N_QUBITS)}
 
 
-# ---- A2. Hybrid PyTorch model ----
 class HybridQuantumClassifier(nn.Module):
     """
-    classical input (4 features, scaled to [0, pi])
-        -> quantum layer (4 qubits, StronglyEntanglingLayers)
-        -> classical linear layer (4 -> 1)
-        -> sigmoid -> probability of "benign"
+    Hybrid classifier:
+        4 scaled input features
+        -> 4-qubit quantum circuit
+        -> 4 quantum expectation values
+        -> classical Linear(4 -> 1) layer
+        -> output logit
+
+    Sigmoid is applied to the logit during inference to obtain
+    a probability for the positive class.
     """
     def __init__(self):
         super().__init__()
@@ -69,12 +60,17 @@ class HybridQuantumClassifier(nn.Module):
         logits = self.classical_out(q_out).squeeze(-1)
         return logits
 
-# ---- A3. Placeholder data generator (stand-in for Member 2's pipeline) ----
+
 def get_placeholder_data():
     """
-    Reproduces the exact PCA + angle-scaling contract Member 2's real
-    pipeline must eventually satisfy: N_QUBITS features, scaled to [0, pi].
-    Used ONLY so Member 3 can build/test without waiting on Member 2.
+    Creates a standalone dataset following the same input contract
+    expected from the eventual preprocessing pipeline:
+
+        30 original features
+        -> standardization
+        -> PCA to 4 features
+        -> MinMax scaling to [0, pi]
+        -> float32 PyTorch tensors
     """
     data = load_breast_cancer()
     X, y = data.data, data.target
@@ -98,18 +94,15 @@ def get_placeholder_data():
     X_train_angles = angle_scaler.fit_transform(X_train_pca)
     X_test_angles = angle_scaler.transform(X_test_pca)
 
-    # ========================================================
-    # CONTRACT VALIDATION
-    # ========================================================
-
+    # Validate the input contract before passing data to the quantum model.
     assert X_train_angles.shape[1] == N_QUBITS
     assert X_test_angles.shape[1] == N_QUBITS
 
     assert np.all(X_train_angles >= 0)
     assert np.all(X_train_angles <= np.pi)
 
-    # Test data may legitimately fall slightly outside the training range.
-    # This is expected because MinMaxScaler is fitted only on training data.
+    # Test values can fall outside the training range because the scaler
+    # is fitted only on training data. This is expected behavior.
     print(
         f"Test angle range: "
         f"[{X_test_angles.min():.4f}, {X_test_angles.max():.4f}]"
@@ -121,7 +114,6 @@ def get_placeholder_data():
     assert set(np.unique(y_train)).issubset({0, 1})
     assert set(np.unique(y_test)).issubset({0, 1})
 
-    # Convert to PyTorch tensors
     X_train_tensor = torch.tensor(
         X_train_angles, dtype=torch.float32
     )
@@ -142,10 +134,14 @@ def get_placeholder_data():
         y_test_tensor,
     )
 
-# ---- A4. Training loop (standard PyTorch, nothing quantum-specific here) ----
+
 def train_hybrid_model(model, X_train, y_train, epochs=15, batch_size=16, lr=0.01):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # Combines sigmoid activation and binary cross-entropy loss
+    # in a numerically stable implementation.
     loss_fn = nn.BCEWithLogitsLoss()
+
     n = len(X_train)
 
     for epoch in range(epochs):
@@ -182,31 +178,22 @@ def train_hybrid_model(model, X_train, y_train, epochs=15, batch_size=16, lr=0.0
     return model
 
 
-# ============================================================
-# PART B: The ONLY section that needs Member 2's actual pipeline
-# ============================================================
-
 def get_real_data_from_member2():
     """
-    *** REPLACE THIS once Member 2's pipeline is ready. ***
+    Adapter for the final preprocessing pipeline.
 
-    CONTRACT Member 2's `preprocess()` function must satisfy:
-      - Input: raw dataset (WDBC and/or Heart Disease)
-      - Output: (X_train, X_test, y_train, y_test) where
-          X_train, X_test are torch.float32 tensors, shape (N, N_QUBITS)
-          all values scaled to the range [0, pi]
-          y_train, y_test are torch.float32 tensors of 0/1 labels
+    Expected output:
+        X_train, X_test: float32 tensors with shape (N, 4)
+                         and values scaled for quantum angle encoding.
+        y_train, y_test: float32 tensors containing binary 0/1 labels.
 
-    Everything in PART A (model, training loop, evaluation) is written
-    against this contract and does NOT need to change once this
-    function is filled in -- only this function gets swapped out.
+    The hybrid model and training loop operate entirely against this
+    interface, allowing the preprocessing implementation to be replaced
+    without modifying the classifier.
     """
     raise NotImplementedError("Waiting on Member 2's preprocessing pipeline")
 
 
-# ============================================================
-# Demo run using Part A only (placeholder data)
-# ============================================================
 if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
@@ -245,14 +232,11 @@ if __name__ == "__main__":
         f"Inference Time/Sample: "
         f"{(inference_time / len(X_test)) * 1000:.4f} ms"
     )
+
     evaluate_and_report(
-    y_test.numpy(),
-    test_preds.numpy(),
-    test_probabilities.numpy(),
-    model_name="Hybrid TorchLayer VQC",
-    save_path="hybrid_confusion_matrix.png"
+        y_test.numpy(),
+        test_preds.numpy(),
+        test_probabilities.numpy(),
+        model_name="Hybrid TorchLayer VQC",
+        save_path="hybrid_confusion_matrix.png"
     )
-# Quick sanity check: reuse the Part A evaluation contract with evaluate.py
-# (uncomment once evaluate.py is in the same folder)
-# from evaluate import evaluate_and_report
-# evaluate_and_report(y_test.numpy(), test_preds.numpy(), model_name="Hybrid TorchLayer VQC", save_path="hybrid_confusion_matrix.png")
