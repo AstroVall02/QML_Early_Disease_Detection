@@ -1,0 +1,865 @@
+# SIH 2026 — Quantum Machine Learning for Early Disease Detection
+
+## Round 1 — Setup and Reproduction Guide
+
+This repository contains the Round 1 implementation of a hybrid quantum-classical machine learning pipeline for binary disease classification.
+
+The current implementation supports:
+
+* **WDBC (Wisconsin Diagnostic Breast Cancer)**
+* **UCI Heart Disease**
+
+The same hybrid quantum-classical model can be trained on either dataset through the shared preprocessing and evaluation pipeline.
+
+---
+
+# 1. Requirements
+
+## Hardware
+
+The current implementation uses PennyLane's `default.qubit` simulator, so a quantum computer is **not required**.
+
+A normal laptop/desktop is sufficient.
+
+Recommended:
+
+* 8 GB RAM or more
+* Modern multi-core CPU
+* Internet connection for initial package installation
+
+GPU acceleration is not required for the current Round 1 implementation.
+
+---
+
+# 2. Install Python
+
+The project is intended to use **Python 3.12**.
+
+Check whether Python is already installed:
+
+```powershell
+python --version
+```
+
+Expected:
+
+```text
+Python 3.12.x
+```
+
+If Python is not installed, install Python 3.12 from the official Python website.
+
+After installation, verify:
+
+```powershell
+python --version
+```
+
+### Important — Windows Python launcher
+
+Windows may have multiple Python versions installed.
+
+Check:
+
+```powershell
+py --version
+```
+
+and:
+
+```powershell
+python --version
+```
+
+For this project, use the `python` command that points to the Python 3.12 installation.
+
+Do not assume that `py` and `python` point to the same interpreter.
+
+---
+
+# 3. Clone / obtain the repository
+
+Clone the repository:
+
+```powershell
+git clone <repository-url>
+```
+
+Enter the project directory:
+
+```powershell
+cd SIH_2026
+```
+
+Alternatively, if the project was downloaded as a ZIP, extract it and open PowerShell in the project root.
+
+Verify:
+
+```powershell
+dir
+```
+
+---
+
+# 4. Create the virtual environment
+
+From the project root:
+
+```powershell
+python -m venv .venv
+```
+
+This creates an isolated Python environment inside:
+
+```text
+.venv/
+```
+
+---
+
+# 5. Activate the virtual environment
+
+In PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+After activation, the terminal should show:
+
+```text
+(.venv) PS C:\...\SIH_2026>
+```
+
+Verify that Python is coming from the virtual environment:
+
+```powershell
+python --version
+```
+
+and:
+
+```powershell
+where.exe python
+```
+
+The first path should point to:
+
+```text
+SIH_2026\.venv\Scripts\python.exe
+```
+
+---
+
+## PowerShell execution-policy issue
+
+If PowerShell prevents activation with an execution-policy error, run:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+Then try:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+---
+
+# 6. Install required libraries
+
+With the virtual environment activated:
+
+```powershell
+python -m pip install --upgrade pip
+```
+
+Install the required packages:
+
+```powershell
+pip install numpy pandas scikit-learn matplotlib seaborn torch pennylane
+```
+
+These provide:
+
+| Library      | Purpose                             |
+| ------------ | ----------------------------------- |
+| NumPy        | Numerical operations                |
+| Pandas       | Dataset loading/manipulation        |
+| Scikit-learn | Scaling, PCA, splitting and metrics |
+| Matplotlib   | Result visualization                |
+| Seaborn      | Confusion matrix visualization      |
+| PyTorch      | Hybrid classical model              |
+| PennyLane    | Quantum circuit and VQC simulation  |
+
+---
+
+# 7. Verify the environment
+
+Run:
+
+```powershell
+python -c "import numpy, pandas, sklearn, matplotlib, seaborn, torch, pennylane; print('Environment OK')"
+```
+
+Expected:
+
+```text
+Environment OK
+```
+
+You can also check the installed versions:
+
+```powershell
+python -c "import torch, pennylane; print('PyTorch:', torch.__version__); print('PennyLane:', pennylane.__version__)"
+```
+
+---
+
+# 8. Required project structure
+
+The Round 1 project should have the following structure:
+
+```text
+SIH_2026/
+│
+├── .venv/
+│
+├── data/
+│   ├── wdbc.data
+│   └── heart.csv
+│
+├── preprocessing/
+│   ├── __init__.py
+│   ├── data_loader.py
+│   └── preprocessing.py
+│
+├── integration/
+│   ├── __init__.py
+│   ├── hybrid_model_V1.py
+│   └── run_hybrid.py
+│
+├── evaluation/
+│   ├── __init__.py
+│   └── evaluate.py
+│
+├── quantum/
+│   └── ...
+│
+├── classical/
+│   └── ...
+│
+└── README.md
+```
+
+### Important
+
+The following files must exist for the generalized hybrid pipeline:
+
+```text
+preprocessing/__init__.py
+preprocessing/data_loader.py
+preprocessing/preprocessing.py
+
+integration/__init__.py
+integration/hybrid_model_V1.py
+integration/run_hybrid.py
+
+evaluation/__init__.py
+evaluation/evaluate.py
+```
+
+The `__init__.py` files allow these directories to be used as Python packages.
+
+---
+
+# 9. Dataset placement
+
+Place the datasets inside:
+
+```text
+data/
+```
+
+### WDBC
+
+The file should be:
+
+```text
+data/wdbc.data
+```
+
+The preprocessing pipeline expects the standard WDBC raw format.
+
+### Heart Disease
+
+The file should be:
+
+```text
+data/heart.csv
+```
+
+The Heart Disease CSV must contain a:
+
+```text
+target
+```
+
+column.
+
+The current target convention is:
+
+```text
+0 = No Disease
+1 = Disease
+```
+
+---
+
+# 10. Test the preprocessing pipeline
+
+From the project root:
+
+```powershell
+python -m preprocessing.preprocessing
+```
+
+This runs the preprocessing pipeline for both datasets.
+
+The expected WDBC dimensions are:
+
+```text
+Samples : 569
+Features: 30
+
+X_train: (455, 30)
+X_test : (114, 30)
+
+Quantum-ready data:
+X_train: torch.Size([455, 4])
+X_test : torch.Size([114, 4])
+```
+
+The expected Heart Disease dimensions are:
+
+```text
+Samples : 303
+Features: 13
+
+X_train: (242, 13)
+X_test : (61, 13)
+
+Quantum-ready data:
+X_train: torch.Size([242, 4])
+X_test : torch.Size([61, 4])
+```
+
+The preprocessing pipeline performs:
+
+```text
+Raw dataset
+     ↓
+Train/Test split
+     ↓
+StandardScaler
+     ↓
+PCA → 4 components
+     ↓
+MinMaxScaler → [0, π]
+     ↓
+PyTorch float32 tensors
+```
+
+---
+
+# 11. Run the hybrid model
+
+The hybrid model is executed through:
+
+```text
+integration/run_hybrid.py
+```
+
+From the project root:
+
+```powershell
+python -m integration.run_hybrid
+```
+
+The program will ask:
+
+```text
+Enter dataset (wdbc/heart):
+```
+
+Enter:
+
+```text
+wdbc
+```
+
+or:
+
+```text
+heart
+```
+
+---
+
+# 12. Hybrid model architecture
+
+The current hybrid model uses:
+
+```text
+4 input features
+       ↓
+AngleEmbedding
+       ↓
+4-qubit quantum circuit
+       ↓
+StronglyEntanglingLayers
+       ↓
+4 Pauli-Z expectation values
+       ↓
+Linear(4 → 1)
+       ↓
+Binary classification
+```
+
+Configuration:
+
+```text
+Qubits:       4
+Layers:       3
+Batch size:   16
+Epochs:       15
+Optimizer:    Adam
+Loss:         BCEWithLogitsLoss
+```
+
+During inference:
+
+```text
+logit
+  ↓
+sigmoid
+  ↓
+probability
+  ↓
+0.5 threshold
+  ↓
+binary prediction
+```
+
+---
+
+# 13. Run the standalone VQC models
+
+The repository may also contain standalone VQC implementations for individual datasets.
+
+These models use the same general quantum architecture:
+
+```text
+PCA → 4 features
+      ↓
+AngleEmbedding
+      ↓
+StronglyEntanglingLayers
+      ↓
+Measurement
+```
+
+Run them according to their respective module locations.
+
+For package-based execution, use:
+
+```powershell
+python -m <package>.<module>
+```
+
+rather than executing package files directly whenever imports depend on the project root.
+
+---
+
+# 14. Evaluation
+
+The shared evaluator is located at:
+
+```text
+evaluation/evaluate.py
+```
+
+It reports:
+
+* Accuracy
+* Sensitivity
+* Specificity
+* Precision
+* Recall
+* F1-score
+* ROC-AUC
+* Confusion matrix
+
+ROC-AUC requires the model's continuous probability/score output to be passed to:
+
+```python
+y_prob
+```
+
+The evaluator also handles different dataset label conventions through:
+
+```python
+disease_label
+```
+
+and:
+
+```python
+class_names
+```
+
+The current generalized preprocessing convention is:
+
+```text
+0 = No Disease
+1 = Disease
+```
+
+with dataset-specific display names.
+
+---
+
+# 15. Current Round 1 WDBC baseline
+
+The generalized hybrid pipeline currently produces approximately:
+
+```text
+Accuracy:       94.74%
+Sensitivity:    85.71%
+Specificity:    100.00%
+ROC-AUC:        0.9970
+```
+
+on the fixed WDBC test split.
+
+The split uses:
+
+```text
+test_size = 0.20
+random_state = 42
+stratify = y
+```
+
+These results should be treated as the current Round 1 baseline for the generalized hybrid pipeline.
+
+Training and inference times are hardware-dependent and should not be expected to exactly match another machine.
+
+---
+
+# 16. Output files
+
+The hybrid runner saves the confusion matrix using the dataset name.
+
+For WDBC:
+
+```text
+wdbc_hybrid_confusion_matrix.png
+```
+
+For Heart Disease:
+
+```text
+heart_hybrid_confusion_matrix.png
+```
+
+These files are generated in the directory from which the experiment is executed unless a different output path is configured.
+
+---
+
+# 17. Reproducing the WDBC experiment
+
+Complete sequence:
+
+```powershell
+cd SIH_2026
+```
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+```powershell
+python -m preprocessing.preprocessing
+```
+
+Then:
+
+```powershell
+python -m integration.run_hybrid
+```
+
+When prompted:
+
+```text
+Enter dataset (wdbc/heart):
+```
+
+enter:
+
+```text
+wdbc
+```
+
+---
+
+# 18. Reproducing the Heart Disease experiment
+
+Activate the environment:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Run:
+
+```powershell
+python -m integration.run_hybrid
+```
+
+When prompted:
+
+```text
+Enter dataset (wdbc/heart):
+```
+
+enter:
+
+```text
+heart
+```
+
+The same hybrid architecture and evaluator are used.
+
+Only the dataset and corresponding preprocessing are different.
+
+---
+
+# 19. Important reproducibility notes
+
+The project uses:
+
+```python
+torch.manual_seed(0)
+np.random.seed(0)
+```
+
+and:
+
+```python
+random_state=42
+```
+
+for the train/test split.
+
+This makes the experiment substantially more reproducible.
+
+However, exact execution time can vary between machines.
+
+Do not compare training time across machines without considering:
+
+* CPU
+* Python version
+* PyTorch version
+* PennyLane version
+* operating system
+* system load
+
+---
+
+# 20. Common problems
+
+## `.venv\Scripts` does not exist
+
+Make sure the environment was created using Windows Python:
+
+```powershell
+python -m venv .venv
+```
+
+Then check:
+
+```powershell
+dir .venv
+```
+
+A Windows virtual environment should contain:
+
+```text
+Scripts/
+```
+
+---
+
+## `ModuleNotFoundError: No module named 'evaluation'`
+
+Run package modules from the project root:
+
+```powershell
+python -m integration.run_hybrid
+```
+
+rather than:
+
+```powershell
+python integration\run_hybrid.py
+```
+
+Make sure:
+
+```text
+evaluation/__init__.py
+integration/__init__.py
+```
+
+exist.
+
+---
+
+## Wrong Python version
+
+Check:
+
+```powershell
+python --version
+```
+
+and:
+
+```powershell
+where.exe python
+```
+
+Make sure the active interpreter is the one inside:
+
+```text
+.venv\Scripts\python.exe
+```
+
+---
+
+## Dataset not found
+
+Verify:
+
+```text
+data/
+├── wdbc.data
+└── heart.csv
+```
+
+and run the commands from the project root:
+
+```text
+SIH_2026/
+```
+
+---
+
+# 21. Deactivating the environment
+
+When finished:
+
+```powershell
+deactivate
+```
+
+The `(.venv)` prefix should disappear from the terminal.
+
+---
+
+# 22. Quick-start
+
+For someone who already has Python 3.12 installed:
+
+```powershell
+git clone <repository-url>
+cd SIH_2026
+
+python -m venv .venv
+
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+
+pip install numpy pandas scikit-learn matplotlib seaborn torch pennylane
+
+python -m preprocessing.preprocessing
+
+python -m integration.run_hybrid
+```
+
+Then select:
+
+```text
+wdbc
+```
+
+or:
+
+```text
+heart
+```
+
+---
+
+# Round 1 Architecture Summary
+
+```text
+                  ┌──────────────┐
+                  │   WDBC       │
+                  └──────┬───────┘
+                         │
+                  ┌──────▼───────┐
+                  │              │
+                  │ Preprocessing│
+                  │              │
+                  └──────┬───────┘
+                         │
+                  StandardScaler
+                         ↓
+                      PCA(4)
+                         ↓
+                    [0, π] scaling
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  Hybrid VQC Model   │
+              │                     │
+              │  4-qubit VQC        │
+              │       ↓             │
+              │  Linear classifier  │
+              └──────────┬──────────┘
+                         │
+                         ▼
+                  ┌─────────────┐
+                  │ Evaluation  │
+                  ├─────────────┤
+                  │ Accuracy    │
+                  │ Sensitivity │
+                  │ Specificity │
+                  │ F1          │
+                  │ ROC-AUC     │
+                  │ Confusion   │
+                  └─────────────┘
+```
+
+The same pipeline can receive:
+
+```text
+WDBC
+  OR
+Heart Disease
+```
+
+while keeping the **hybrid model and evaluation module shared**.
