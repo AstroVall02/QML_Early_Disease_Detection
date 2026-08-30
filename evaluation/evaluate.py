@@ -1,0 +1,214 @@
+"""
+Evaluation module shared across quantum, classical, and hybrid models.
+
+`evaluate_and_report()` accepts NumPy-compatible true labels, predictions,
+and optionally predicted probabilities/scores for ROC-AUC calculation.
+
+Dataset label conventions differ:
+    WDBC:         malignant (disease present) = 0
+    heart.csv:    disease present = 1
+
+Pass `disease_label` explicitly for each dataset.
+"""
+
+import numpy as np
+from sklearn.metrics import (
+    confusion_matrix,
+    classification_report,
+    accuracy_score,
+    recall_score,
+    roc_auc_score,
+)
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+def evaluate_and_report(
+    y_true,
+    y_pred,
+    y_prob=None,
+    model_name="Model",
+    save_path=None,
+    disease_label=0,
+    class_names=("Disease", "No Disease"),
+):
+    
+    y_true = np.asarray(y_true).astype(int).ravel()
+    y_pred = np.asarray(y_pred).astype(int).ravel()
+    other_label = 1 - disease_label
+
+    acc = accuracy_score(y_true, y_pred)
+
+    # Sensitivity measures recall for the disease-positive class.
+    sensitivity = recall_score(y_true, y_pred, pos_label=disease_label)
+
+    # Specificity measures recall for the disease-negative class.
+    specificity = recall_score(y_true, y_pred, pos_label=other_label)
+
+    if y_prob is not None:
+        y_prob = np.asarray(y_prob).ravel()
+
+        # ROC-AUC requires scores where higher values indicate greater
+        # likelihood of disease, regardless of the dataset's label encoding.
+        score_for_auc = y_prob if disease_label == 1 else (1 - y_prob)
+        auc = roc_auc_score(y_true == disease_label, score_for_auc)
+    else:
+        auc = None
+
+    print(f" {model_name}")
+    print(f"Accuracy:    {acc:.4f}")
+    print(f"Sensitivity ({class_names[0]} recall): {sensitivity:.4f}")
+    print(f"Specificity ({class_names[1]} recall): {specificity:.4f}")
+    print(f"ROC-AUC:     {auc:.4f}" if auc is not None else "ROC-AUC:     Not available (pass y_prob to compute)")
+    print()
+
+    labels_ordered = [disease_label, other_label]
+
+    print(classification_report(
+        y_true,
+        y_pred,
+        labels=labels_ordered,
+        target_names=list(class_names)
+    ))
+
+    cm = confusion_matrix(y_true, y_pred, labels=labels_ordered)
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        cbar=False,
+        xticklabels=list(class_names),
+        yticklabels=list(class_names),
+        ax=ax,
+    )
+
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    ax.set_title(f"Confusion Matrix — {model_name}")
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=200)
+        print(f"Saved confusion matrix plot to {save_path}")
+
+    plt.close(fig)
+
+    return {
+        "accuracy": acc,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "roc_auc": auc,
+        "confusion_matrix": cm,
+    }
+
+
+if __name__ == "__main__":
+    import pennylane as qml
+    from pennylane import numpy as pnp
+    from sklearn.datasets import load_breast_cancer
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler
+    from sklearn.decomposition import PCA
+
+    data = load_breast_cancer()
+    X, y = data.data, data.target
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y
+    )
+
+    N_QUBITS = 4
+
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    pca = PCA(n_components=N_QUBITS)
+    X_train_pca = pca.fit_transform(X_train_scaled)
+    X_test_pca = pca.transform(X_test_scaled)
+
+    angle_scaler = MinMaxScaler(feature_range=(0, np.pi))
+    X_train_angles = angle_scaler.fit_transform(X_train_pca)
+    X_test_angles = angle_scaler.transform(X_test_pca)
+
+    y_train_pm = pnp.array(y_train * 2 - 1, requires_grad=False)
+    y_test_pm = pnp.array(y_test * 2 - 1, requires_grad=False)
+
+    dev = qml.device("default.qubit", wires=N_QUBITS)
+    N_LAYERS = 3
+
+    @qml.qnode(dev, diff_method="backprop")
+    def circuit(weights, x):
+        qml.AngleEmbedding(x, wires=range(N_QUBITS), rotation="Y")
+        qml.StronglyEntanglingLayers(weights, wires=range(N_QUBITS))
+        return qml.expval(qml.PauliZ(0))
+
+    def variational_classifier(weights, bias, x):
+        return circuit(weights, x) + bias
+
+    def square_loss(labels, predictions):
+        return pnp.mean((labels - qml.math.stack(predictions)) ** 2)
+
+    def cost(weights, bias, X, y):
+        predictions = [variational_classifier(weights, bias, x) for x in X]
+        return square_loss(y, predictions)
+
+    np.random.seed(0)
+
+    weight_shape = qml.StronglyEntanglingLayers.shape(
+        n_layers=N_LAYERS,
+        n_wires=N_QUBITS
+    )
+
+    weights = pnp.array(
+        np.random.uniform(0, 2 * np.pi, weight_shape),
+        requires_grad=True
+    )
+
+    bias = pnp.array(0.0, requires_grad=True)
+
+    opt = qml.NesterovMomentumOptimizer(stepsize=0.05)
+
+    for epoch in range(15):
+        perm = np.random.permutation(len(X_train_angles))
+        Xs, ys = X_train_angles[perm], y_train_pm[perm]
+
+        for start in range(0, len(Xs), 16):
+            weights, bias, _, _ = opt.step(
+                cost,
+                weights,
+                bias,
+                Xs[start:start + 16],
+                ys[start:start + 16]
+            )
+
+    test_preds_raw = np.array([
+        variational_classifier(weights, bias, x)
+        for x in X_test_angles
+    ])
+
+    preds_sign = np.sign(test_preds_raw)
+
+    # Convert {-1,+1} predictions back to the dataset's {0,1} labels.
+    y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
+    y_pred_01 = ((preds_sign + 1) // 2).astype(int)
+
+    # Convert the raw VQC output into a probability-like score for AUC.
+    y_prob_benign = np.clip((test_preds_raw + 1) / 2, 0, 1)
+
+    evaluate_and_report(
+        y_true_01,
+        y_pred_01,
+        y_prob=y_prob_benign,
+        model_name="VQC (4 qubits)",
+        save_path="vqc_confusion_matrix.png",
+        disease_label=0,
+        class_names=("Malignant", "Benign"),
+    )
