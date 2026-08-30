@@ -15,8 +15,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA
 
-from evaluate import evaluate_and_report
-
 
 # 1] Load and split data into training and testing sets
 data = load_breast_cancer()
@@ -117,18 +115,7 @@ for epoch in range(N_EPOCHS):
     print(f"Epoch {epoch+1:2d}/{N_EPOCHS} | "
           f"Cost: {train_cost:.4f} | Train Acc: {train_acc:.4f}")
 
-# 8] TESTING
+# TESTING
 test_preds = [variational_classifier(weights, bias, x) for x in X_test_angles]
 test_acc = accuracy(y_test_pm, test_preds)
-##print(f"\nFinal Test Accuracy: {test_acc:.4f}")
-preds_sign = pnp.sign(qml.math.stack(test_preds))
-y_true_01 = ((np.asarray(y_test_pm) + 1) // 2).astype(int)
-y_pred_01 = ((np.asarray(preds_sign) + 1) // 2).astype(int)
-
-evaluate_and_report(
-    y_true_01,
-    y_pred_01,
-    model_name="VQC Breast Cancer (4 qubits)",
-    save_path="VQC_BCancer_confusion_matrix.png"
-)
-
+print(f"\nFinal Test Accuracy: {test_acc:.4f}")
